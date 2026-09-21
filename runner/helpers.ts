@@ -53,6 +53,8 @@ export interface ParseState {
   fails: number;
   expects: number;
   filesRan: number;
+  /** Test files seen so far (for live TUI progress); filesRan is the final count. */
+  filesSeen: number;
   failures: TestFailure[];
   capturing: TestFailure | null;
   /**
@@ -73,6 +75,7 @@ export function createParseState(): ParseState {
     fails: 0,
     expects: 0,
     filesRan: 0,
+    filesSeen: 0,
     failures: [],
     capturing: null,
     pendingDetails: null,
@@ -197,6 +200,7 @@ export function feedLine(state: ParseState, rawLine: string): void {
   if (FILE_HEADER_RE.test(trimmed)) {
     state.currentFile = trimmed.slice(0, -1);
     state.currentTest = "";
+    state.filesSeen++;
     state.capturing = null;
     flushPendingDetails(state);
     return;

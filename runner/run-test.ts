@@ -130,7 +130,7 @@ EXAMPLES
 
 interface RunMeta {
   startedAt: number;
-  command: string;
+  label: string;
 }
 
 function renderTuiFrame(state: ParseState, meta: RunMeta, repaint: boolean): void {
@@ -141,15 +141,16 @@ function renderTuiFrame(state: ParseState, meta: RunMeta, repaint: boolean): voi
 
   const truncate = (s: string): string => (s.length > 55 ? `...${s.slice(-52)}` : s);
   const file = truncate(state.currentFile) || "Discovering tests...";
-  const test = truncate(state.currentTest) || "-";
+  const test = truncate(state.currentTest) || "Running...";
 
   let out = repaint ? `\x1b[${TUI_FRAME_HEIGHT}A\x1b[J` : "";
-  out += `\x1b[36m\x1b[1m⚡ bun-quiet-test\x1b[0m \x1b[33m${elapsed}s\x1b[0m\n`;
+  out += `\x1b[36m\x1b[1m⚡ bun-quiet-test\x1b[0m \x1b[90m[${meta.label}]\x1b[0m \x1b[33m${elapsed}s elapsed\x1b[0m\n`;
   out += `\x1b[90m${rule}\x1b[0m\n`;
-  out += `  \x1b[1mFile:\x1b[0m    \x1b[34m${file}\x1b[0m\n`;
-  out += `  \x1b[1mTest:\x1b[0m    \x1b[37m${test}\x1b[0m\n`;
-  out += `  \x1b[1mStats:\x1b[0m   \x1b[32m${state.passes} passed\x1b[0m • \x1b[31m${state.fails} failed\x1b[0m${state.expects > 0 ? ` • \x1b[90m${state.expects} asserts\x1b[0m` : ""}\n`;
-  out += `  \x1b[90m$ ${meta.command}\x1b[0m\n`;
+  out += `  \x1b[1m📁 File:\x1b[0m    \x1b[34m${file}\x1b[0m\n`;
+  out += `  \x1b[1m▶ Test:\x1b[0m    \x1b[37m${test}\x1b[0m\n`;
+  const assertsBadge = state.expects > 0 ? ` • \x1b[90m${state.expects} asserts\x1b[0m` : "";
+  out += `  \x1b[1m📊 Tests:\x1b[0m   \x1b[32m${state.passes} passed\x1b[0m • \x1b[31m${state.fails} failed\x1b[0m${assertsBadge}\n`;
+  out += `  \x1b[1m📦 Files:\x1b[0m   \x1b[36m${state.filesSeen}\x1b[0m \x1b[90mseen so far\x1b[0m\n`;
   out += `\x1b[90m${rule}\x1b[0m\n`;
 
   process.stdout.write(out);
@@ -262,7 +263,7 @@ async function runTests(paths: string[], timeoutMs: number | null, forwarded: st
   const command = `bun ${bunArgs.join(" ")}`;
 
   const state = createParseState();
-  const meta: RunMeta = { startedAt: performance.now(), command };
+  const meta: RunMeta = { startedAt: performance.now(), label: paths.join(" ") };
   const rawLines: string[] = [];
 
   const proc = Bun.spawn([BUN_BIN, ...bunArgs], {

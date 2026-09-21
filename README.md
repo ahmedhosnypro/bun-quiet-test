@@ -101,21 +101,17 @@ child `bun test` runs — current file, current test, running pass/fail/assert c
 elapsed time:
 
 ```
-⚡ bun-quiet-test 12.4s
+⚡ bun-quiet-test [test/] 12.4s elapsed
 ────────────────────────────────────────────────────────────────────────────────
-  File:    test/math.test.ts
-  Test:    average > averages a list of numbers
-  Stats:   9 passed • 0 failed • 9 asserts
-  $ bun test test/
+  📁 File:    test/math.test.ts
+  ▶ Test:     average > averages a list of numbers
+  📊 Tests:   9 passed • 0 failed • 9 asserts
+  📦 Files:   3 seen so far
 ────────────────────────────────────────────────────────────────────────────────
 ```
 
-To watch it for real, run the demo suite — it contains slow tests (about 6 seconds
-total) so the frames tick by visibly:
-
-```
-bun run demo
-```
+To watch it for real, run `bun run test` — the showcase suite contains slow tests
+(about 6 seconds total) so the frames tick by visibly.
 
 When the run ends, the TUI is replaced by the same compact report agents get (with ANSI
 colors). Non-TTY consumers — AI agents, CI logs, pipes — never see the TUI or any escape
@@ -124,10 +120,10 @@ sequences at all, so it never contaminates captured output.
 ## Usage
 
 ```sh
-bun run test                                     # whole suite (default path: test/)
-bun run test:file test/math.test.ts              # one file
-bun run demo                                      # demo suite: slow TUI tests + failure kinds (~6s)
-bun run runner/run-test.ts --plain test/         # plain text (no TUI, no colors)
+bun run test                                      # showcase suite: slow TUI tests + failure kinds (~6s)
+bun run test:file test/math.test.ts               # one file or filter
+bun run runner/run-test.ts test/                  # the quiet passing suite
+bun run runner/run-test.ts --plain test/          # plain text (no TUI, no colors)
 bun run last                                      # re-read the last run's summary — no rerun
 bun run runner/run-test.ts --last test/math.test.ts
 bun run runner/run-test.ts --last --focus "average" test/math.test.ts
@@ -185,6 +181,9 @@ lines with a pointer to the full log.
 
 3. Run `bun run test` (or pass a path/filters). `logs/` is created automatically and
    should be gitignored.
+
+Note: in this repo the `test` script points at `demo/` (the showcase suite) because the
+repository itself is the template — in your project it points at your own suite.
 
 No databases, no services, no integrations — it wraps whatever `bun test` already runs in
 your project, sequentially, exactly as `bun test` would.
