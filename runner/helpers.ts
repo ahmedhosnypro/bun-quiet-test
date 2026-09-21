@@ -96,6 +96,19 @@ function extractName(trimmed: string, prefixes: string[]): string {
 }
 
 const FILE_HEADER_RE = /^\S[^:]*\.test\.[cm]?tsx?:$/;
+const CODE_SNIPPET_RE = /^\s*\d+\s*\|/;
+const BARE_CARET_RE = /^\s*\^$/;
+
+/**
+ * Bun prefixes error blocks with a source-code snippet (numbered lines plus a
+ * bare `^` caret). Snippets belong to the *next* failure and are deliberately
+ * excluded from the compact report — the `at <file>:<line>` frame is kept
+ * instead. Caret lines that carry a message (`^ this test timed out ...`) are
+ * real error details and are kept.
+ */
+function isSnippetLine(trimmed: string): boolean {
+  return CODE_SNIPPET_RE.test(trimmed) || BARE_CARET_RE.test(trimmed);
+}
 const SUMMARY_RE = {
   pass: /^(\d+)\s+pass$/,
   fail: /^(\d+)\s+fail$/,
@@ -189,14 +202,22 @@ export function feedLine(state: ParseState, rawLine: string): void {
     return;
   }
 
-  if (state.capturing) {
-    state.capturing.details.push(trimmed);
+  if (isSnippetLine(trimmed)) {
+    state.capturing = null;
     return;
   }
 
   if (trimmed.startsWith("error:")) {
+    // An error block always belongs to the NEXT (fail) line — close any open
+    // capture first so details never bleed into the previous failure.
+    state.capturing = null;
     if (state.pendingDetails) flushPendingDetails(state);
     state.pendingDetails = [trimmed];
+    return;
+  }
+
+  if (state.capturing) {
+    state.capturing.details.push(trimmed);
     return;
   }
 

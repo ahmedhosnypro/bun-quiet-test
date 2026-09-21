@@ -61,33 +61,38 @@ it's captured to `logs/<timestamp>/` and can be re-read on demand with `--last`.
 ## Failure output
 
 Failures are where compact output matters most: the report keeps **only** the failed test
-names and their deduplicated error details (`error:`, `Expected`/`Received`, top frames) —
-no passing-test noise, no repeated lines, no `node_modules` stack frames.
+names and their deduplicated error details — no passing-test noise, no repeated lines, no
+code-snippet dumps, no `node_modules` stack frames.
 
-The repo ships a deliberately failing demo (`demo/failure.test.ts`, outside the default
-path). Run it to see the format:
+The repo ships a demo suite in `demo/` (outside the default `test/` path) that exercises
+all three failure kinds bun produces — assertion diff, thrown error, and test timeout:
 
 ```
-$ bun run runner/run-test.ts --plain demo/failure.test.ts
+$ bun run runner/run-test.ts --plain demo/failures.test.ts
 
 === bun-quiet-test result ===
-Command: bun test demo/failure.test.ts
-Files: 1  Pass: 0  Fail: 1  Asserts: 1  Time: 0.01s
+Command: bun test demo/failures.test.ts
+Files: 1  Pass: 0  Fail: 3  Asserts: 1  Time: 0.51s
 Status: FAILED
 
 Failed tests:
-  demo/failure.test.ts > failure demo > intentionally fails to show the compact error report [FAIL]
+  demo/failures.test.ts > failure demo > assertion diff failure [FAIL]
     error: expect(received).toBe(expected)
     Expected: 5
     Received: 4
-    at <anonymous> (/path/to/bun-quiet-test/demo/failure.test.ts:12:23)
+    at <anonymous> (/path/to/bun-quiet-test/demo/failures.test.ts:12:23)
+  demo/failures.test.ts > failure demo > thrown error failure [FAIL]
+    error: boom: something went wrong on purpose
+    at <anonymous> (/path/to/bun-quiet-test/demo/failures.test.ts:16:60)
+  demo/failures.test.ts > failure demo > timeout failure [FAIL]
+    ^ this test timed out after 500ms.
 
-Log: logs/2026-09-21T02-00-32/demo__failure.test.ts.log
+Log: logs/2026-09-21T04-36-19/demo__failures.test.ts.log
 ```
 
-Compare that with the raw output for the same single failure: 20+ lines including a
-10-line source snippet, the passing-test list, and banner — most of it irrelevant to
-fixing the bug.
+Compare that with the raw output for the same three failures: 40+ lines including
+numbered source snippets, blank-line padding, the passing-test list, and version
+banners — most of it irrelevant to fixing the bug.
 
 ## The TUI (humans only)
 
@@ -105,6 +110,13 @@ elapsed time:
 ────────────────────────────────────────────────────────────────────────────────
 ```
 
+To watch it for real, run the demo suite — it contains slow tests (about 6 seconds
+total) so the frames tick by visibly:
+
+```
+bun run demo
+```
+
 When the run ends, the TUI is replaced by the same compact report agents get (with ANSI
 colors). Non-TTY consumers — AI agents, CI logs, pipes — never see the TUI or any escape
 sequences at all, so it never contaminates captured output.
@@ -113,9 +125,10 @@ sequences at all, so it never contaminates captured output.
 
 ```sh
 bun run test                                     # whole suite (default path: test/)
-bun run runner/run-test.ts test/math.test.ts     # one file
+bun run test:file test/math.test.ts              # one file
+bun run demo                                      # demo suite: slow TUI tests + failure kinds (~6s)
 bun run runner/run-test.ts --plain test/         # plain text (no TUI, no colors)
-bun run last                                     # re-read the last run's summary — no rerun
+bun run last                                      # re-read the last run's summary — no rerun
 bun run runner/run-test.ts --last test/math.test.ts
 bun run runner/run-test.ts --last --focus "average" test/math.test.ts
 bun run runner/run-test.ts -- --coverage         # forward flags verbatim to bun test
@@ -150,9 +163,11 @@ behavior, so it stays portable across Bun versions and projects.
 
 Bun prints a failure's error block *before* its `(fail)` line; the parser buffers error
 details and merges them into the matching `(fail)` entry. Error blocks that no `(fail)`
-line claims (file-level crashes) are kept as unattributed failures. Details are then
-deduplicated, `node_modules` frames are dropped, and each failure is capped at 30 lines
-with a pointer to the full log.
+line claims (file-level crashes) are kept as unattributed failures. Numbered source
+snippets and bare `^` carets are dropped — the `at <file>:<line>` frame already carries
+the location — while caret lines that carry a message (test timeouts) are kept. Details
+are then deduplicated, `node_modules` frames are dropped, and each failure is capped at 30
+lines with a pointer to the full log.
 
 ## Use it in your own project
 
@@ -182,7 +197,8 @@ runner/
   helpers.ts     # ANSI stripping, line dedupe, bun test output parser
 src/             # tiny pure-function modules the demo tests exercise
 test/            # passing demo suite
-demo/            # deliberately failing test (outside the default run path)
+demo/            # showcase suite: slow passing tests (watch the TUI) + all
+                 # three failure kinds (diff, thrown error, timeout)
 ```
 
 ## License

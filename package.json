@@ -7,6 +7,7 @@
   "scripts": {
     "test": "bun run runner/run-test.ts",
     "test:file": "bun run runner/run-test.ts",
+    "demo": "bun run runner/run-test.ts demo/",
     "last": "bun run runner/run-test.ts --last"
   }
 }
