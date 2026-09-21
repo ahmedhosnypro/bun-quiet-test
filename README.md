@@ -126,14 +126,13 @@ sequences at all, so it never contaminates captured output.
 ## Usage
 
 ```sh
-bun run test                                      # showcase suite: slow TUI tests + failure kinds (~6s)
-bun run test:file test/math.test.ts               # one file or filter
-bun run runner/run-test.ts test/                  # the quiet passing suite
-bun run runner/run-test.ts --plain test/          # plain text (no TUI, no colors)
-bun run last                                      # re-read the last run's summary — no rerun
-bun run runner/run-test.ts --last test/math.test.ts
+bun test                                           # just works — the guard delegates to the wrapper
+bun test math                                      # one file or substring filter, passed through
+bun run test                                       # the same, script form (showcase suite)
+bun run test:file -- --coverage test/math.test.ts  # flag-bearing runs forward verbatim
+bun run runner/run-test.ts --plain test/           # plain text (no TUI, no colors)
+bun run last                                       # re-read the last run's summary — no rerun
 bun run runner/run-test.ts --last --focus "average" test/math.test.ts
-bun run runner/run-test.ts -- --coverage         # forward flags verbatim to bun test
 ```
 
 | Flag | Description |
@@ -147,6 +146,13 @@ bun run runner/run-test.ts -- --coverage         # forward flags verbatim to bun
 
 Notes:
 
+- Typing plain `bun test` is intercepted by the preload guard and delegated to the
+  wrapper — same TUI, same compact report, same exit code. Bun still prints its banner
+  and the first file header before the guard takes over.
+- Flags on a direct `bun test` call cannot be forwarded through the preload (Bun does
+  not expose CLI flags to preloads). Detected flags print a notice; use
+  `bun run test:file -- <flags> <paths>` for flag support, or bypass the guard for raw
+  output: `BUN_QUIET_TEST_RUNNER_OK=1 bun test ...`
 - Positional paths follow standard `bun test` semantics: they act as substring filters
   over discovered test file paths (e.g. `math` matches `test/math.test.ts`).
 - The child runs with `--inspect` so the wrapper can attach its live reporter via
@@ -168,6 +174,14 @@ test the moment it *starts* and a progress bar computed from the discovered
 test total. If that connection fails (older Bun, busy port, a very fast run),
 the TUI silently falls back to state parsed from the piped text.
 
+Plain `bun test` is intercepted the same way siraj's test runners do it: `bunfig.toml`
+loads `runner/test-runner-guard.ts` as a `[test]` preload, so it runs inside every
+`bun test` process. The guard recovers the original command line from the OS
+(`/proc/self/cmdline` on Linux, `ps` elsewhere — preloads don't receive CLI flags
+or the invocation args) and transparently re-executes the wrapper with the same
+path filters. The wrapper marks its own children with `BUN_QUIET_TEST_RUNNER_OK=1`,
+which makes the guard a no-op there and prevents infinite delegation.
+
 The compact final report is always built by parsing the piped text: with a
 non-TTY stdout, bun falls back to plain-ASCII output — `(pass)` / `(fail)`
 prefixes and `N pass / N fail / N expect() calls` summary lines — which a
@@ -185,7 +199,7 @@ lines with a pointer to the full log.
 
 ## Use it in your own project
 
-`runner/` is self-contained (two files, no imports outside Bun/Node built-ins):
+`runner/` is self-contained (three files, no imports outside Bun/Node built-ins):
 
 1. Copy `runner/` into your project.
 2. Add to `package.json`:
@@ -197,7 +211,15 @@ lines with a pointer to the full log.
    }
    ```
 
-3. Run `bun run test` (or pass a path/filters). `logs/` is created automatically and
+3. Add the preload guard to `bunfig.toml` so plain `bun test` goes through the
+   wrapper too:
+
+   ```toml
+   [test]
+   preload = ["./runner/test-runner-guard.ts"]
+   ```
+
+4. Run `bun run test` (or just `bun test`). `logs/` is created automatically and
    should be gitignored.
 
 Note: in this repo the `test` script points at `demo/` (the showcase suite) because the
@@ -210,12 +232,14 @@ your project, sequentially, exactly as `bun test` would.
 
 ```
 runner/
-  run-test.ts    # the wrapper: TUI, final report, log capture, --last/--focus
-  helpers.ts     # ANSI stripping, line dedupe, bun test output parser
-src/             # tiny pure-function modules the demo tests exercise
-test/            # passing demo suite
-demo/            # showcase suite: slow passing tests (watch the TUI) + all
-                 # three failure kinds (diff, thrown error, timeout)
+  run-test.ts          # the wrapper: TUI, final report, log capture, --last/--focus
+  test-runner-guard.ts # bunfig preload: intercepts direct `bun test` and delegates
+  helpers.ts           # ANSI stripping, line dedupe, bun test output parser
+bunfig.toml            # loads the guard as a [test] preload
+src/                   # tiny pure-function modules the demo tests exercise
+test/                  # passing demo suite
+demo/                  # showcase suite: slow passing tests (watch the TUI) + all
+                       # three failure kinds (diff, thrown error, timeout)
 ```
 
 ## License

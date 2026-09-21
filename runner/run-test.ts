@@ -29,7 +29,7 @@ import {
 const BUN_BIN = process.execPath;
 const PROJECT_ROOT = process.cwd();
 const LOGS_DIR = join(PROJECT_ROOT, "logs");
-const DEFAULT_TEST_PATH = "test/";
+const DEFAULT_TEST_PATH = "demo/";
 const TUI_REFRESH_INTERVAL_MS = 150;
 const TUI_FRAME_HEIGHT = 7;
 
@@ -118,7 +118,7 @@ FLAGS
   -h, --help          Print this help
 
 ARGUMENTS
-  <paths>               One or more test files or directories (default: test/)
+  <paths>               One or more test files or directories (default: demo/)
                         Note: bun treats these as substring filters over test
                         file paths, e.g. "math" matches test/math.test.ts
 
@@ -409,7 +409,7 @@ async function runTests(paths: string[], timeoutMs: number | null, forwarded: st
     stdout: "pipe",
     stderr: "pipe",
     cwd: PROJECT_ROOT,
-    env: { ...process.env, FORCE_COLOR: "0", NODE_ENV: "test" },
+    env: { ...process.env, FORCE_COLOR: "0", NODE_ENV: "test", BUN_QUIET_TEST_RUNNER_OK: "1" },
   });
 
   const onLine = (line: string): void => {

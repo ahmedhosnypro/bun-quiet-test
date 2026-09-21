@@ -1,0 +1,5 @@
+[test]
+# The guard intercepts direct `bun test` invocations and delegates them to
+# runner/run-test.ts (live TUI + compact report). The wrapper sets
+# BUN_QUIET_TEST_RUNNER_OK=1 on its own children, making this a no-op there.
+preload = ["./runner/test-runner-guard.ts"]
