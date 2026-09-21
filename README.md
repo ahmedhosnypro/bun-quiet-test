@@ -101,14 +101,20 @@ child `bun test` runs — current file, current test, running pass/fail/assert c
 elapsed time:
 
 ```
-⚡ bun-quiet-test [test/] 12.4s elapsed
+⚡ bun-quiet-test [demo/] 2.4s elapsed
 ────────────────────────────────────────────────────────────────────────────────
-  📁 File:    test/math.test.ts
-  ▶ Test:     average > averages a list of numbers
-  📊 Tests:   9 passed • 0 failed • 9 asserts
-  📦 Files:   3 seen so far
+  📁 File:    demo/slow.test.ts
+  ▶ Test:     slow demo > processes a batch
+  📊 Tests:   1 passed • 0 failed
+  📦 Progress: [█████░░░░░░░░░░░] 33% (1/3 tests)
 ────────────────────────────────────────────────────────────────────────────────
 ```
+
+The `▶ Test` and `📦 Progress` rows are driven in real time by bun's own
+`TestReporter` events (the wrapper attaches to `bun test --inspect` over the
+inspector WebSocket — bun's official custom-reporter channel), so the current
+test appears the moment it starts and the bar reflects the discovered test
+total.
 
 To watch it for real, run `bun run test` — the showcase suite contains slow tests
 (about 6 seconds total) so the frames tick by visibly.
@@ -143,6 +149,10 @@ Notes:
 
 - Positional paths follow standard `bun test` semantics: they act as substring filters
   over discovered test file paths (e.g. `math` matches `test/math.test.ts`).
+- The child runs with `--inspect` so the wrapper can attach its live reporter via
+  bun's inspector protocol (the official custom-reporter mechanism). Forward your
+  own `--inspect*` flags after `--` and the wrapper won't add another. Inspector
+  banner noise never reaches the report.
 - Exit code always mirrors the underlying `bun test` exit code, so scripts and CI gates
   work unchanged.
 - `logs/` holds one `<timestamp>/<paths>.log` file per run with the full raw output. It is
@@ -150,12 +160,20 @@ Notes:
 
 ## How it works
 
-The wrapper spawns `bun test` with piped stdout/stderr, `FORCE_COLOR=0`, and
-`NODE_ENV=test`. With a non-TTY stdout, bun falls back to plain-ASCII output — `(pass)`
-/ `(fail)` prefixes and `N pass / N fail / N expect() calls` summary lines — which a small
-line parser (`runner/helpers.ts`) consumes as it streams. No custom reporters, no plugins,
-no inspector protocol: it's a plain wrapper around completely standard `bun test`
-behavior, so it stays portable across Bun versions and projects.
+The wrapper spawns `bun test --inspect` with piped stdout/stderr, `FORCE_COLOR=0`,
+and `NODE_ENV=test`. The inspector is bun's official custom-reporter mechanism:
+the wrapper connects to the inspector WebSocket and subscribes to
+`TestReporter.found` / `start` / `end` events, so the TUI shows the current
+test the moment it *starts* and a progress bar computed from the discovered
+test total. If that connection fails (older Bun, busy port, a very fast run),
+the TUI silently falls back to state parsed from the piped text.
+
+The compact final report is always built by parsing the piped text: with a
+non-TTY stdout, bun falls back to plain-ASCII output — `(pass)` / `(fail)`
+prefixes and `N pass / N fail / N expect() calls` summary lines — which a
+small line parser (`runner/helpers.ts`) consumes. No plugins, no config, no
+side effects: it's a plain wrapper around standard `bun test` behavior, so it
+stays portable across Bun versions and projects.
 
 Bun prints a failure's error block *before* its `(fail)` line; the parser buffers error
 details and merges them into the matching `(fail)` entry. Error blocks that no `(fail)`

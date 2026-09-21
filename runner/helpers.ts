@@ -101,6 +101,12 @@ function extractName(trimmed: string, prefixes: string[]): string {
 const FILE_HEADER_RE = /^\S[^:]*\.test\.[cm]?tsx?:$/;
 const CODE_SNIPPET_RE = /^\s*\d+\s*\|/;
 const BARE_CARET_RE = /^\s*\^$/;
+/**
+ * bun prints the inspector banner to stderr the moment a debugger attaches,
+ * which can land mid-stream (between failures). These lines are never test
+ * output — drop them everywhere without touching capture state.
+ */
+const INSPECTOR_NOISE_RE = /Bun Inspector|debug\.bun\.sh|^ws:\/\/|^Listening:$/;
 
 /**
  * Bun prefixes error blocks with a source-code snippet (numbered lines plus a
@@ -152,6 +158,8 @@ export function feedLine(state: ParseState, rawLine: string): void {
     else if (state.pendingDetails) state.pendingDetails.push("");
     return;
   }
+
+  if (INSPECTOR_NOISE_RE.test(trimmed)) return;
 
   if (SUMMARY_RE.pass.test(trimmed)) {
     state.passes = Number.parseInt(SUMMARY_RE.pass.exec(trimmed)![1]!, 10);

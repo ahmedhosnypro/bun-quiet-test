@@ -1,8 +1,13 @@
 /**
  * bun-quiet-test — a `bun test` wrapper built for AI agents.
  *
- * Wraps a plain, sequential `bun test` run (no custom reporters, no plugins):
- *   - Humans in a TTY get a live, single-frame progress view while tests run.
+ * Wraps a plain, sequential `bun test` run:
+ *   - Humans in a TTY get a live single-frame progress view while tests run,
+ *     driven by bun's official custom-reporter mechanism: the child runs with
+ *     `--inspect` and the wrapper subscribes to TestReporter events over the
+ *     inspector WebSocket (current test at start, discovered total for the
+ *     progress bar). If that connection fails, the TUI falls back to parsing
+ *     the piped text output.
  *   - At the end, EVERYONE (human or agent) gets one compact report:
  *     counts + failed tests + deduplicated error details. Nothing else.
  *   - The full raw output is captured to logs/<timestamp>/<slug>.log so it can
@@ -126,6 +131,112 @@ EXAMPLES
 `);
 }
 
+// --- live reporter (bun's official custom-reporter mechanism) ----------------
+//
+// With `--inspect`, bun exposes the TestReporter domain over the inspector
+// WebSocket: TestReporter.found / start / end events. That gives the TUI
+// real-time data piped text cannot: the current test name the moment it
+// STARTS, and the discovered test total for a progress bar. The final report
+// always comes from text parsing; if the WebSocket fails or the Bun version
+// lacks the domain, the TUI silently falls back to text-derived state.
+
+interface LiveTestInfo {
+  name: string;
+  parentId?: number;
+  url?: string;
+}
+
+interface LiveState {
+  connected: boolean;
+  ws: WebSocket | null;
+  testsTotal: number;
+  testsCompleted: number;
+  passed: number;
+  failed: number;
+  names: Map<number, LiveTestInfo>;
+  currentTestId: number | null;
+}
+
+function createLiveState(): LiveState {
+  return {
+    connected: false,
+    ws: null,
+    testsTotal: 0,
+    testsCompleted: 0,
+    passed: 0,
+    failed: 0,
+    names: new Map(),
+    currentTestId: null,
+  };
+}
+
+const WS_URL_RE = /ws:\/\/[^\s'"]+/;
+
+function tryConnectInspector(rawLine: string, live: LiveState): void {
+  if (live.ws) return;
+  const match = WS_URL_RE.exec(rawLine);
+  if (!match) return;
+
+  // bun's inspector binds to IPv6 loopback only; "localhost" may not resolve there.
+  const url = match[0].replace("localhost", "[::1]");
+  let ws: WebSocket;
+  try {
+    ws = new WebSocket(url);
+  } catch {
+    return;
+  }
+  live.ws = ws;
+
+  ws.onopen = () => {
+    ws.send(JSON.stringify({ id: 1, method: "Runtime.enable" }));
+    ws.send(JSON.stringify({ id: 2, method: "TestReporter.enable" }));
+    ws.send(JSON.stringify({ id: 3, method: "LifecycleReporter.enable" }));
+    live.connected = true;
+  };
+  ws.onmessage = (msg: MessageEvent) => handleInspectorMessage(live, String(msg.data));
+  ws.onclose = () => {
+    live.connected = false;
+  };
+}
+
+function handleInspectorMessage(live: LiveState, data: string): void {
+  let parsed: { method?: string; params?: Record<string, unknown> };
+  try {
+    parsed = JSON.parse(data);
+  } catch {
+    return;
+  }
+  const params = parsed.params;
+  if (!params) return;
+
+  if (parsed.method === "TestReporter.found") {
+    if (params.type === "test") live.testsTotal++;
+    live.names.set(params.id as number, {
+      name: String(params.name ?? ""),
+      parentId: params.parentId as number | undefined,
+      url: params.url as string | undefined,
+    });
+  } else if (parsed.method === "TestReporter.start") {
+    live.currentTestId = params.id as number;
+  } else if (parsed.method === "TestReporter.end") {
+    live.testsCompleted++;
+    if (params.status === "fail") live.failed++;
+    else live.passed++;
+  }
+}
+
+function liveTestName(live: LiveState, id: number | null): string {
+  const parts: string[] = [];
+  let cursor: number | null | undefined = id;
+  let guard = 0;
+  while (cursor != null && live.names.has(cursor) && guard++ < 10) {
+    const info = live.names.get(cursor)!;
+    parts.unshift(info.name);
+    cursor = info.parentId ?? null;
+  }
+  return parts.join(" > ");
+}
+
 // --- TUI (humans only; never rendered when stdout is not a TTY) -------------
 
 interface RunMeta {
@@ -133,24 +244,48 @@ interface RunMeta {
   label: string;
 }
 
-function renderTuiFrame(state: ParseState, meta: RunMeta, repaint: boolean): void {
+function renderProgressBar(current: number, total: number): string {
+  const width = 16;
+  if (total <= 0 || current > total) {
+    return `\x1b[36m${current}\x1b[0m \x1b[90mtests done (total unknown)\x1b[0m`;
+  }
+  const ratio = Math.min(1, Math.max(0, current / total));
+  const filled = Math.round(ratio * width);
+  const bar = "█".repeat(filled) + "░".repeat(width - filled);
+  const percent = Math.round(ratio * 100);
+  return `\x1b[36m[${bar}]\x1b[0m \x1b[1m${percent}%\x1b[0m \x1b[90m(${current}/${total} tests)\x1b[0m`;
+}
+
+function renderTuiFrame(state: ParseState, live: LiveState, meta: RunMeta, repaint: boolean): void {
   if (!useColor) return;
   const elapsed = ((performance.now() - meta.startedAt) / 1000).toFixed(1);
   const width = Math.min(80, process.stdout.columns ?? 80);
   const rule = "─".repeat(width);
 
   const truncate = (s: string): string => (s.length > 55 ? `...${s.slice(-52)}` : s);
-  const file = truncate(state.currentFile) || "Discovering tests...";
-  const test = truncate(state.currentTest) || "Running...";
+  const liveInfo = live.currentTestId !== null ? live.names.get(live.currentTestId) : undefined;
+  const file = liveInfo?.url
+    ? truncate(relative(PROJECT_ROOT, liveInfo.url))
+    : truncate(state.currentFile);
+  const test = live.currentTestId !== null
+    ? truncate(liveTestName(live, live.currentTestId))
+    : truncate(state.currentTest);
+
+  const showLive = live.connected;
+  const passed = showLive ? live.passed : state.passes;
+  const failed = showLive ? live.failed : state.fails;
 
   let out = repaint ? `\x1b[${TUI_FRAME_HEIGHT}A\x1b[J` : "";
   out += `\x1b[36m\x1b[1m⚡ bun-quiet-test\x1b[0m \x1b[90m[${meta.label}]\x1b[0m \x1b[33m${elapsed}s elapsed\x1b[0m\n`;
   out += `\x1b[90m${rule}\x1b[0m\n`;
-  out += `  \x1b[1m📁 File:\x1b[0m    \x1b[34m${file}\x1b[0m\n`;
-  out += `  \x1b[1m▶ Test:\x1b[0m    \x1b[37m${test}\x1b[0m\n`;
+  out += `  \x1b[1m📁 File:\x1b[0m    \x1b[34m${file || "Discovering tests..."}\x1b[0m\n`;
+  out += `  \x1b[1m▶ Test:\x1b[0m    \x1b[37m${test || "Running..."}\x1b[0m\n`;
   const assertsBadge = state.expects > 0 ? ` • \x1b[90m${state.expects} asserts\x1b[0m` : "";
-  out += `  \x1b[1m📊 Tests:\x1b[0m   \x1b[32m${state.passes} passed\x1b[0m • \x1b[31m${state.fails} failed\x1b[0m${assertsBadge}\n`;
-  out += `  \x1b[1m📦 Files:\x1b[0m   \x1b[36m${state.filesSeen}\x1b[0m \x1b[90mseen so far\x1b[0m\n`;
+  out += `  \x1b[1m📊 Tests:\x1b[0m   \x1b[32m${passed} passed\x1b[0m • \x1b[31m${failed} failed\x1b[0m${assertsBadge}\n`;
+  const progress = live.connected && live.testsTotal > 0
+    ? renderProgressBar(live.testsCompleted, live.testsTotal)
+    : `\x1b[36m${state.filesSeen}\x1b[0m \x1b[90mfiles seen so far\x1b[0m`;
+  out += `  \x1b[1m📦 Progress:\x1b[0m ${progress}\n`;
   out += `\x1b[90m${rule}\x1b[0m\n`;
 
   process.stdout.write(out);
@@ -259,10 +394,14 @@ async function streamLines(readable: ReadableStream<Uint8Array>, onLine: (line: 
 async function runTests(paths: string[], timeoutMs: number | null, forwarded: string[]): Promise<number> {
   const bunArgs = ["test", ...paths];
   if (timeoutMs !== null) bunArgs.push(`--timeout=${timeoutMs}`);
+  // The inspector gives the live TUI real-time TestReporter events. Never
+  // double-add when the caller forwarded their own inspector flags.
+  if (!forwarded.some(a => a.startsWith("--inspect"))) bunArgs.push("--inspect");
   bunArgs.push(...forwarded);
   const command = `bun ${bunArgs.join(" ")}`;
 
   const state = createParseState();
+  const live = createLiveState();
   const meta: RunMeta = { startedAt: performance.now(), label: paths.join(" ") };
   const rawLines: string[] = [];
 
@@ -276,6 +415,7 @@ async function runTests(paths: string[], timeoutMs: number | null, forwarded: st
   const onLine = (line: string): void => {
     rawLines.push(line);
     feedLine(state, line);
+    if (!live.ws) tryConnectInspector(line, live);
   };
 
   const useTui = useColor;
@@ -283,15 +423,22 @@ async function runTests(paths: string[], timeoutMs: number | null, forwarded: st
   let firstFrame = true;
   const ticker = useTui
     ? setInterval(() => {
-        renderTuiFrame(state, meta, !firstFrame);
+        renderTuiFrame(state, live, meta, !firstFrame);
         firstFrame = false;
       }, TUI_REFRESH_INTERVAL_MS)
     : null;
-  if (useTui) renderTuiFrame(state, meta, false);
+  if (useTui) renderTuiFrame(state, live, meta, false);
 
   const cleanup = (): void => {
     if (ticker) clearInterval(ticker);
     if (useTui) process.stdout.write("\x1b[?25h");
+    if (live.ws) {
+      try {
+        live.ws.close();
+      } catch {
+        // already closed
+      }
+    }
   };
   process.on("SIGINT", () => {
     cleanup();
